@@ -65,7 +65,7 @@ whileStmt: WHILE LP expr RP stmt;
 forStmt: FOR LP (scalarVarDecl | assignExpr)? SEMI (expr)? SEMI (assignExpr | expr)? RP stmt;
 scalarVarDecl: (AUTO | typeType) ID (ASSIGN expr)?; 
 
-switchStmt: SWITCH LP expr RP LBRACE (caseStmt | defaultStmt)* RBRACE;
+switchStmt: SWITCH LP expr RP LBRACE caseStmt* (defaultStmt caseStmt*)? RBRACE;
 caseStmt: CASE expr COLON stmt*;
 defaultStmt: DEFAULT COLON stmt*;
 
