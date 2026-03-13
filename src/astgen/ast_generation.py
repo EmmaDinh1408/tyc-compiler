@@ -89,6 +89,8 @@ class ASTGeneration(TyCVisitor):
             return FloatLiteral(float(ctx.FLOATLIT().getText()))
         elif ctx.STRINGLIT():
             return StringLiteral(ctx.STRINGLIT().getText())
+        elif ctx.structLiteral():
+            return self.visit(ctx.structLiteral())
         
     def visitExpr1(self, ctx: TyCParser.Expr1Context):
         if ctx.getChildCount() == 1:
@@ -186,3 +188,78 @@ class ASTGeneration(TyCVisitor):
         
     def visitExpr(self, ctx: TyCParser.ExprContext):
         return self.visit(ctx.expr1())
+    
+    def visitIfStmt(self, ctx: TyCParser.IfStmtContext):
+        condition = self.visit(ctx.expr())
+        then_stmt = self.visit(ctx.stmt(0))
+        else_stmt = self.visit(ctx.stmt(1)) if ctx.ELSE() else None
+        return IfStmt(condition, then_stmt, else_stmt)
+
+    def visitSwitchStmt(self, ctx: TyCParser.SwitchStmtContext):
+        expr = self.visit(ctx.expr())
+        cases = [self.visit(case) for case in ctx.caseStmt()] if ctx.caseStmt() else []
+        default_case = self.visit(ctx.defaultStmt()) if ctx.defaultStmt() else None
+        return SwitchStmt(expr, cases, default_case)
+
+    def visitCaseStmt(self, ctx: TyCParser.CaseStmtContext):
+        expr = self.visit(ctx.expr())
+        stmts = [self.visit(stmt) for stmt in ctx.stmt()]
+        return CaseStmt(expr, stmts)
+
+    def visitDefaultStmt(self, ctx: TyCParser.DefaultStmtContext):
+        stmts = [self.visit(stmt) for stmt in ctx.stmt()]
+        return DefaultStmt(stmts)
+    
+    def visitWhileStmt(self, ctx: TyCParser.WhileStmtContext):
+        condition = self.visit(ctx.expr())
+        body = self.visit(ctx.stmt())
+        return WhileStmt(condition, body)
+
+    def visitForStmt(self, ctx: TyCParser.ForStmtContext):
+        semi_indices = [i for i in range(ctx.getChildCount()) if ctx.getChild(i).getText() == ';']
+        semi1, semi2 = semi_indices[0], semi_indices[1]
+        init = None
+        if semi1 > 2: 
+            init_ctx = ctx.getChild(2)
+            if isinstance(init_ctx, TyCParser.ScalarVarDeclContext):
+                init = self.visit(init_ctx)
+            else:
+                init = ExprStmt(self.visit(init_ctx)) 
+                
+        condition = None
+        if semi2 > semi1 + 1:
+            condition = self.visit(ctx.getChild(semi1 + 1))
+        update = None
+        rp_index = ctx.getChildCount() - 2
+        if rp_index > semi2 + 1:
+            update = self.visit(ctx.getChild(semi2 + 1))
+            
+        body = self.visit(ctx.stmt())
+        return ForStmt(init, condition, update, body)
+    
+    def visitBreakStmt(self, ctx: TyCParser.BreakStmtContext):
+        return BreakStmt()
+
+    def visitContinueStmt(self, ctx: TyCParser.ContinueStmtContext):
+        return ContinueStmt()
+    
+    def visitExprStmt(self, ctx: TyCParser.ExprStmtContext):
+        expr = self.visit(ctx.expr())
+        return ExprStmt(expr)
+    def visitStructLiteral(self, ctx: TyCParser.StructLiteralContext):
+        exprs = self.visit(ctx.exprList()) if ctx.exprList() else []
+        return StructLiteral(exprs)
+    
+    def visitScalarVarDecl(self, ctx: TyCParser.ScalarVarDeclContext):
+        name = ctx.ID().getText()
+        typ = "auto" if ctx.AUTO() else self.visit(ctx.typeType())
+        init = self.visit(ctx.expr()) if ctx.expr() else None
+        return VarDecl(typ, name, init)
+
+    def visitAssignExpr(self, ctx: TyCParser.AssignExprContext):
+        left = self.visit(ctx.expr2())
+        right = self.visit(ctx.expr1())
+        return AssignExpr(left, right)
+    
+    def visitExprList(self, ctx: TyCParser.ExprListContext):
+        return [self.visit(expr) for expr in ctx.expr()]
