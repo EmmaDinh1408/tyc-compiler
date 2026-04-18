@@ -162,8 +162,8 @@ FLOATLIT:
 
 INTLIT: [0-9]+; 
 
-ILLEGAL_ESCAPE: '"' ( ~["\\\r\n] | '\\' [bfnrt"\\] )* '\\' ~[bfnrt"\\];
-UNCLOSE_STRING: '"' ( ~["\\\r\n] | '\\' [bfnrt"\\] )* ( [\r\n] | EOF );
+ILLEGAL_ESCAPE: '"' ( ~["\\\r\n] | '\\' [bfnrt"\\] )* '\\' ~[bfnrt"\\\r\n];
+UNCLOSE_STRING: '"' ( ~["\\\r\n] | '\\' [bfnrt"\\] )* '\\'? ( [\r\n] | EOF );
 STRINGLIT: '"' ( ~["\\\r\n] | '\\' [bfnrt"\\] )* '"' { self.text = self.text[1:-1] };
 
 ID: [a-zA-Z_] [a-zA-Z0-9_]*;

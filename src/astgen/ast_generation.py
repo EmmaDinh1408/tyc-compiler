@@ -11,7 +11,6 @@ from src.utils.nodes import *
 
 
 class ASTGeneration(TyCVisitor):
-    """AST Generation visitor for TyC language."""
     def visitProgram(self, ctx: TyCParser.ProgramContext):
         decls = []
         for i in range(ctx.getChildCount() - 1):
@@ -182,7 +181,7 @@ class ASTGeneration(TyCVisitor):
             op = ctx.INC().getText() if ctx.INC() else ctx.DEC().getText()
             return PostfixOp(op, operand) 
         elif ctx.LP() and (ctx.exprList() or ctx.getChildCount() == 3):
-            func_name = self.visit(ctx.expr9())
+            func_name = ctx.expr9().getText() #func_name = self.visit(ctx.expr9())
             args = self.visit(ctx.exprList()) if ctx.exprList() else []
             return FuncCall(func_name, args)
         
