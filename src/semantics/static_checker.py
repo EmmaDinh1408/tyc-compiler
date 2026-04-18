@@ -183,13 +183,11 @@ class StaticChecker(ASTVisitor):
 
 #support class
 class UnknownType(Type):
-    """Đại diện cho biến auto chưa suy luận được kiểu"""
     def __str__(self):
         return "Unknown"
 
 class Symbol:
-    """Lưu trữ thông tin của một định danh (biến, hàm, tham số, struct) trong Environment"""
     def __init__(self, name: str, typ: Type, kind: str):
         self.name = name
         self.typ = typ
-        self.kind = kind # "Variable", "Function", "Parameter", "Struct"
+        self.kind = kind 

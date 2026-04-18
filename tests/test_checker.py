@@ -113,19 +113,47 @@ void main() {
 # Declare (test_021 - test_040)
 # ============================================================================
 
-
+def test_021():
+    """Test error: Local variable reuses parameter name"""
+    source = """
+    void func(int x) {
+        int x = 10; 
+    }
+    """
+    # Cần check chính xác message từ file static_error.py
+    expected = "Redeclared Variable: x" 
+    assert Checker(source).check_from_source() == expected
 
 # ============================================================================
 # Control Flow (test_041 - test_050)
 # ============================================================================
 
-
+def test_041():
+    """Test error: continue is not allowed in switch"""
+    source = """
+    void main() {
+        int x = 1;
+        switch(x) {
+            case 1: continue;
+        }
+    }
+    """
+    expected = "MustInLoop: ContinueStmt()" # Dựa theo hàm __str__ của node
+    assert Checker(source).check_from_source() == expected
 
 # ============================================================================
 # Type Mismatch Expression (test_051 - test_070)
 # ============================================================================
 
-
+def test_051():
+    """Test error: Type mismatch in expression"""
+    source = """
+    void main() {
+        int x = 5 + "hello";
+    }
+    """
+    expected = "TypeMismatchInExpression: BinaryOp(IntLiteral(5), +, StringLiteral('hello'))"
+    assert Checker(source).check_from_source() == expected
 
 
 # ============================================================================
@@ -134,8 +162,17 @@ void main() {
 
 
 
-
 # ============================================================================
-# Type Cannot Be Inferred (test_085 - test_100)
+# Type Cannot Be Inferred (test_086 - test_100)
 # ============================================================================
 
+def test_086():
+    """Test error: Type cannot be inferred for circular assignment"""
+    source = """
+    void main() {
+        auto a; auto b;
+        a = b;
+    }
+    """
+    expected = "TypeCannotBeInferred: AssignExpr(Identifier(a) = Identifier(b))"
+    assert Checker(source).check_from_source() == expected
