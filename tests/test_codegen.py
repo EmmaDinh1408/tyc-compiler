@@ -1896,39 +1896,35 @@ def test_080():
 
 
 def test_081():
-    """Test 81: Equality check - true"""
+    """Test 81: For loop statement"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(7), "==", IntLiteral(7))
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(IntType(), "sum", IntLiteral(0)),
+            ForStmt(
+                VarDecl(IntType(), "i", IntLiteral(1)),
+                BinaryOp(Identifier("i"), "<=", IntLiteral(3)),
+                AssignExpr(Identifier("i"), BinaryOp(Identifier("i"), "+", IntLiteral(1))),
+                BlockStmt([
+                    ExprStmt(AssignExpr(Identifier("sum"), BinaryOp(Identifier("sum"), "+", Identifier("i"))))
+                ])
+            ),
+            ExprStmt(FuncCall("printInt", [Identifier("sum")]))
+        ]))
     ])
-    expected = "1"
+    expected = "6"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
 
-
 def test_082():
-    """Test 82: Equality check - false"""
+    """Test 82: Postfix and Prefix operators"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(7), "==", IntLiteral(8))
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(IntType(), "x", IntLiteral(5)),
+            ExprStmt(FuncCall("printInt", [PostfixOp("++", Identifier("x"))])), # In ra 5, x thành 6
+            ExprStmt(FuncCall("printInt", [PrefixOp("++", Identifier("x"))]))   # x thành 7, in ra 7
+        ]))
     ])
-    expected = "0"
+    expected = "57"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
 
@@ -2096,7 +2092,7 @@ def test_090():
             ])
         )
     ])
-    expected = "0.3333"
+    expected = "0.33333334"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
 

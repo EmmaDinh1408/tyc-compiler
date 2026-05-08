@@ -115,14 +115,33 @@ class CodeGenerator(BaseVisitor):
 
         if is_void_type(self.current_return_type):
             self.emit.print_out(self.emit.emit_return(VoidType(), frame))
-
+        else:
+            if is_int_type(self.current_return_type):
+                self.emit.print_out(self.emit.jvm.emitICONST(0))
+                frame.push()
+                self.emit.print_out(self.emit.emit_return(IntType(), frame))
+            elif is_float_type(self.current_return_type):
+                self.emit.print_out(self.emit.jvm.emitFCONST("0.0"))
+                frame.push()  
+                self.emit.print_out(self.emit.emit_return(FloatType(), frame))
+            elif is_string_type(self.current_return_type):
+                self.emit.print_out(self.emit.jvm.emitLDC('""'))
+                frame.push()  
+                self.emit.print_out(self.emit.emit_return(StringType(), frame))
+            else:
+                self.emit.print_out(self.emit.jvm.emitPUSHNULL())
+                frame.push() 
+                self.emit.print_out(self.emit.emit_return(self.current_return_type, frame))
         self.emit.print_out(self.emit.emit_label(end_label, frame))
         frame.exit_scope()
         self.emit.print_out(self.emit.emit_end_method(frame))
 
     def visit_block_stmt(self, node: BlockStmt, o: SubBody = None):
+        old_sym_len = len(o.sym)
+        
         for stmt in node.statements:
             o = self.visit(stmt, o)
+        o.sym = o.sym[:old_sym_len]
         return o
 
     def visit_var_decl(self, node: VarDecl, o: SubBody = None):
@@ -189,6 +208,17 @@ class CodeGenerator(BaseVisitor):
         left_code, left_type = self.visit(node.left, o)
         right_code, right_type = self.visit(node.right, o)
         frame = o.frame
+
+        is_float_op = False
+        if node.operator in ["+", "-", "*", "/", "<", "<=", ">", ">=", "==", "!="]:
+            if is_float_type(left_type) or is_float_type(right_type):
+                is_float_op = True
+
+        if is_float_op:
+            if is_int_type(left_type):
+                left_code += self.emit.jvm.emitI2F()
+            if is_int_type(right_type):
+                right_code += self.emit.jvm.emitI2F()
 
         if node.operator in ["+", "-"]:
             result_type = FloatType() if is_float_type(left_type) or is_float_type(right_type) else IntType()
@@ -389,9 +419,12 @@ class CodeGenerator(BaseVisitor):
         if not self.loop_stack:
             raise RuntimeError("ContinueStmt outside of loop")
         
-        loop_context = self.loop_stack[-1]
-        self.emit.print_out(self.emit.emit_goto(loop_context["start"], o.frame))
-        return o
+        for loop_context in reversed(self.loop_stack):
+            if loop_context["start"] is not None:
+                self.emit.print_out(self.emit.emit_goto(loop_context["start"], o.frame))
+                return o
+                
+        raise RuntimeError("ContinueStmt outside of loop")
 
     def visit_prefix_op(self, node: PrefixOp, o: Access = None):
         frame = o.frame
@@ -479,17 +512,13 @@ class CodeGenerator(BaseVisitor):
     def visit_member_access(self, node: MemberAccess, o: Access = None):
         frame = o.frame
         
-        if isinstance(node.obj, Identifier):
-            sym = self._lookup_symbol(node.obj.name, o.sym)
-            obj_code = self.emit.emit_read_var(node.obj.name, sym.type, sym.value.value, frame)
-        else:
-            obj_code, _ = self.visit(node.obj, o)
-        
+        obj_code, obj_type = self.visit(node.obj, o)
         self.emit.print_out(obj_code)
         
-        member_type = IntType()  
+        struct_name = obj_type.struct_name if hasattr(obj_type, 'struct_name') else "UnknownStruct"
+        field_lexeme = f"{struct_name}/{node.member}"
         
-        field_lexeme = f"{node.obj}/{ node.member}" if isinstance(node.obj, Identifier) else f"Object/{node.member}"
+        member_type = IntType()  
         field_code = self.emit.emit_get_field(field_lexeme, member_type, frame)
         
         return obj_code + field_code, member_type
