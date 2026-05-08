@@ -296,10 +296,17 @@ class CodeGenerator(BaseVisitor):
         return code, node.struct_type
     
     def visit_member_decl(self, node: MemberDecl, o: Any = None):
-        return None
+        emitter = o 
+        member_type = self.visit(node.member_type, o)
+        jvm_type = emitter.get_jvm_type(member_type)
+        return f".field public {node.name} {jvm_type}\n"
 
     def visit_param(self, node: Param, o: Any = None):
-        return None
+        frame, start_label, end_label = o
+        idx = frame.get_new_index()
+        param_type = self.visit(node.param_type, o) 
+        var_code = self.emit.emit_var(idx, node.name, param_type, start_label, end_label)
+        return var_code, Symbol(node.name, param_type, Index(idx))
 
     def visit_int_type(self, node: IntType, o: Any = None):
         return node
