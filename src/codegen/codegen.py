@@ -25,6 +25,7 @@ class CodeGenerator(BaseVisitor):
         self.functions = {}
         self.current_return_type = VoidType()
         self.class_name = "TyC"
+        self.loop_stack = []  
 
     def _lookup_symbol(self, name: str, sym_list: list[Symbol]) -> Symbol:
         for sym in reversed(sym_list):
@@ -247,9 +248,23 @@ class CodeGenerator(BaseVisitor):
     def visit_string_literal(self, node: StringLiteral, o: Access = None):
         return self.emit.emit_push_const(node.value, StringType(), o.frame), StringType()
 
-    def visit_struct_decl(self, node: StructDecl, o: Any = None):
-        return None
-
+    def visit_struct_literal(self, node: StructLiteral, o: Access = None):
+        frame = o.frame
+        struct_name = node.struct_type.struct_name
+        
+        code = self.emit.emit_new_instance(struct_name, frame)
+        
+        for field_name, field_value in zip(node.field_names, node.field_values):
+            code += self.emit.emit_dup(frame)
+            
+            field_code, field_type = self.visit(field_value, o)
+            code += field_code
+            
+            field_lexeme = f"{struct_name}/{field_name}"
+            code += self.emit.emit_put_field(field_lexeme, field_type, frame)
+        
+        return code, node.struct_type
+    
     def visit_member_decl(self, node: MemberDecl, o: Any = None):
         return None
 
@@ -270,34 +285,228 @@ class CodeGenerator(BaseVisitor):
 
     def visit_struct_type(self, node: StructType, o: Any = None):
         return node
+    
+    def visit_for_stmt(self, node: ForStmt, o: SubBody = None):
+        frame = o.frame
+        
+        if node.init:
+            self.visit(node.init, o)
+        
+        start_label = frame.get_new_label()
+        end_label = frame.get_new_label()
+        update_label = frame.get_new_label()
+        
+        self.loop_stack.append({"start": update_label, "end": end_label})
+        
+        self.emit.print_out(self.emit.emit_label(start_label, frame))
+        
+        if node.condition:
+            cond_code, _ = self.visit(node.condition, Access(frame, o.sym))
+            self.emit.print_out(cond_code)
+            self.emit.print_out(self.emit.emit_if_false(end_label, frame))
+        
+        self.visit(node.body, o)
+        
+        self.emit.print_out(self.emit.emit_label(update_label, frame))
+        if node.update:
+            update_code, _ = self.visit(node.update, Access(frame, o.sym))
+            self.emit.print_out(update_code)
+            self.emit.print_out(self.emit.emit_pop(frame))
+        
+        self.emit.print_out(self.emit.emit_goto(start_label, frame))
+        self.emit.print_out(self.emit.emit_label(end_label, frame))
+        
+        self.loop_stack.pop()
+        return o
 
-    def visit_for_stmt(self, node: ForStmt, o: Any = None):
-        raise RuntimeError("ForStmt not supported in minimal codegen")
-
-    def visit_switch_stmt(self, node: SwitchStmt, o: Any = None):
-        raise RuntimeError("SwitchStmt not supported in minimal codegen")
-
+    def visit_switch_stmt(self, node: SwitchStmt, o: SubBody = None):
+        frame = o.frame
+    
+        cond_code, _ = self.visit(node.condition, Access(frame, o.sym))
+        self.emit.print_out(cond_code)
+        
+        end_label = frame.get_new_label()
+        self.loop_stack.append({"start": None, "end": end_label})
+        
+        case_body_labels = []
+        for _ in node.cases:
+            case_body_labels.append(frame.get_new_label())
+            
+        default_label = frame.get_new_label() if node.default_case else end_label
+        
+        for i, case in enumerate(node.cases):
+            next_check_label = frame.get_new_label()
+            
+            self.emit.print_out(self.emit.emit_dup(frame))
+            
+            case_val_code, case_val_type = self.visit(case.value, Access(frame, o.sym))
+            self.emit.print_out(case_val_code)
+            
+            self.emit.print_out(self.emit.emit_re_op("==", case_val_type, frame))
+            
+            self.emit.print_out(self.emit.emit_if_false(next_check_label, frame))
+            
+            self.emit.print_out(self.emit.emit_pop(frame))
+            self.emit.print_out(self.emit.emit_goto(case_body_labels[i], frame))
+            
+            self.emit.print_out(self.emit.emit_label(next_check_label, frame))
+            
+        self.emit.print_out(self.emit.emit_pop(frame))
+        self.emit.print_out(self.emit.emit_goto(default_label, frame))
+        
+        for i, case in enumerate(node.cases):
+            self.emit.print_out(self.emit.emit_label(case_body_labels[i], frame))
+            self.visit(case, o)
+        if node.default_case:
+            self.emit.print_out(self.emit.emit_label(default_label, frame))
+            self.visit(node.default_case, o)
+            
+        self.emit.print_out(self.emit.emit_label(end_label, frame))
+        
+        self.loop_stack.pop()
+        
+        return o
+    
     def visit_case_stmt(self, node: CaseStmt, o: Any = None):
-        raise RuntimeError("CaseStmt not supported in minimal codegen")
+        for stmt in node.statements:
+            self.visit(stmt, o)
+        return o
 
     def visit_default_stmt(self, node: DefaultStmt, o: Any = None):
-        raise RuntimeError("DefaultStmt not supported in minimal codegen")
+        for stmt in node.statements:
+            self.visit(stmt, o)
+        return o
 
-    def visit_break_stmt(self, node: BreakStmt, o: Any = None):
-        raise RuntimeError("BreakStmt not supported in minimal codegen")
+    def visit_break_stmt(self, node: BreakStmt, o: SubBody = None):
+        if not self.loop_stack:
+            raise RuntimeError("BreakStmt outside of loop")
+        
+        loop_context = self.loop_stack[-1]
+        self.emit.print_out(self.emit.emit_goto(loop_context["end"], o.frame))
+        return o
 
-    def visit_continue_stmt(self, node: ContinueStmt, o: Any = None):
-        raise RuntimeError("ContinueStmt not supported in minimal codegen")
+    def visit_continue_stmt(self, node: ContinueStmt, o: SubBody = None):
+        if not self.loop_stack:
+            raise RuntimeError("ContinueStmt outside of loop")
+        
+        loop_context = self.loop_stack[-1]
+        self.emit.print_out(self.emit.emit_goto(loop_context["start"], o.frame))
+        return o
 
-    def visit_prefix_op(self, node: PrefixOp, o: Any = None):
-        raise RuntimeError("PrefixOp not supported in minimal codegen")
+    def visit_prefix_op(self, node: PrefixOp, o: Access = None):
+        frame = o.frame
+        
+        if node.operator == "-":
+            operand_code, operand_type = self.visit(node.operand, o)
+            self.emit.print_out(operand_code)
+            self.emit.print_out(self.emit.emit_neg_op(operand_type, frame))
+            return operand_code + self.emit.emit_neg_op(operand_type, frame), operand_type
+        
+        elif node.operator == "!":
+            operand_code, _ = self.visit(node.operand, o)
+            self.emit.print_out(operand_code)
+            label_true = frame.get_new_label()
+            label_end = frame.get_new_label()
+            self.emit.print_out(self.emit.emit_if_false(label_true, frame))
+            self.emit.print_out(self.emit.emit_push_iconst(0, frame))
+            self.emit.print_out(self.emit.emit_goto(label_end, frame))
+            self.emit.print_out(self.emit.emit_label(label_true, frame))
+            self.emit.print_out(self.emit.emit_push_iconst(1, frame))
+            self.emit.print_out(self.emit.emit_label(label_end, frame))
+            return operand_code + self.emit.emit_neg_op(IntType(), frame), IntType()
+        
+        elif node.operator == "++":
+            if not isinstance(node.operand, Identifier):
+                raise RuntimeError("Pre-increment only supports identifiers")
+            sym = self._lookup_symbol(node.operand.name, o.sym)
+            idx = sym.value.value
+            
+            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+            code += self.emit.emit_push_iconst(1, frame)
+            code += self.emit.emit_add_op("+", sym.type, frame)
+            code += self.emit.emit_dup(frame)
+            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+            return code, sym.type
+        
+        elif node.operator == "--":
+            if not isinstance(node.operand, Identifier):
+                raise RuntimeError("Pre-decrement only supports identifiers")
+            sym = self._lookup_symbol(node.operand.name, o.sym)
+            idx = sym.value.value
+            
+            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+            code += self.emit.emit_push_iconst(1, frame)
+            code += self.emit.emit_add_op("-", sym.type, frame)
+            code += self.emit.emit_dup(frame)
+            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+            return code, sym.type
+        
+        raise RuntimeError(f"Unsupported prefix operator: {node.operator}")
 
-    def visit_postfix_op(self, node: PostfixOp, o: Any = None):
-        raise RuntimeError("PostfixOp not supported in minimal codegen")
+    def visit_postfix_op(self, node: PostfixOp, o: Access = None):
+        frame = o.frame
+        
+        if node.operator == "++":
+            if not isinstance(node.operand, Identifier):
+                raise RuntimeError("Post-increment only supports identifiers")
+            sym = self._lookup_symbol(node.operand.name, o.sym)
+            idx = sym.value.value
+            
+            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+            code += self.emit.emit_dup(frame) 
+            code += self.emit.emit_push_iconst(1, frame)
+            code += self.emit.emit_add_op("+", sym.type, frame)
+            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+            return code, sym.type
+        
+        elif node.operator == "--":
+            
+            if not isinstance(node.operand, Identifier):
+                raise RuntimeError("Post-decrement only supports identifiers")
+            sym = self._lookup_symbol(node.operand.name, o.sym)
+            idx = sym.value.value
+            
+            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+            code += self.emit.emit_dup(frame)  
+            code += self.emit.emit_push_iconst(1, frame)
+            code += self.emit.emit_add_op("-", sym.type, frame)
+            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+            
+            return code, sym.type
+        
+        raise RuntimeError(f"Unsupported postfix operator: {node.operator}")
 
-    def visit_member_access(self, node: MemberAccess, o: Any = None):
-        raise RuntimeError("MemberAccess not supported in minimal codegen")
+    def visit_member_access(self, node: MemberAccess, o: Access = None):
+        frame = o.frame
+        
+        if isinstance(node.obj, Identifier):
+            sym = self._lookup_symbol(node.obj.name, o.sym)
+            obj_code = self.emit.emit_read_var(node.obj.name, sym.type, sym.value.value, frame)
+        else:
+            obj_code, _ = self.visit(node.obj, o)
+        
+        self.emit.print_out(obj_code)
+        
+        member_type = IntType()  
+        
+        field_lexeme = f"{node.obj}/{ node.member}" if isinstance(node.obj, Identifier) else f"Object/{node.member}"
+        field_code = self.emit.emit_get_field(field_lexeme, member_type, frame)
+        
+        return obj_code + field_code, member_type
 
-    def visit_struct_literal(self, node: StructLiteral, o: Any = None):
-        raise RuntimeError("StructLiteral not supported in minimal codegen")
+    def visit_struct_literal(self, node: StructLiteral, o: Access = None):
+        frame = o.frame
+        struct_name = node.struct_type.struct_name
+        
+        code = self.emit.emit_new_instance(struct_name, frame)
+        
+        for field_name, field_value in zip(node.field_names, node.field_values):
+            code += self.emit.emit_dup(frame)
 
+            field_code, field_type = self.visit(field_value, o)
+            code += field_code
+            
+            field_lexeme = f"{struct_name}/{field_name}"
+            code += self.emit.emit_put_field(field_lexeme, field_type, frame)
+        
+        return code, node.struct_type
