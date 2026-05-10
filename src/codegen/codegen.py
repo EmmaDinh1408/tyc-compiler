@@ -172,9 +172,19 @@ class CodeGenerator(BaseVisitor):
             )
         )
         if node.init_value is not None:
+            if isinstance(node.init_value, StructLiteral):
+                node.init_value.struct_type = var_type
+
             rhs_code, _ = self.visit(node.init_value, Access(frame, o.sym))
             self.emit.print_out(rhs_code)
             self.emit.print_out(self.emit.emit_write_var(node.name, var_type, idx, frame))
+        else:
+            if hasattr(var_type, 'struct_name'):
+                code = self.emit.emit_new_instance(var_type.struct_name, frame)
+                self.emit.print_out(code)
+                self.emit.print_out(self.emit.emit_write_var(node.name, var_type, idx, frame))
+        
+        
         o.sym.append(Symbol(node.name, var_type, Index(idx)))
         return o
 
@@ -219,6 +229,8 @@ class CodeGenerator(BaseVisitor):
         if node.expr is None:
             self.emit.print_out(self.emit.emit_return(VoidType(), o.frame))
             return o
+        if isinstance(node.expr, StructLiteral):
+            node.expr.struct_type = self.current_return_type
         code, ret_type = self.visit(node.expr, Access(o.frame, o.sym))
         self.emit.print_out(code)
         self.emit.print_out(self.emit.emit_return(ret_type, o.frame))
@@ -290,6 +302,8 @@ class CodeGenerator(BaseVisitor):
         raise RuntimeError(f"Unsupported operator: {node.operator}")
 
     def visit_assign_expr(self, node: AssignExpr, o: Access = None):
+        if isinstance(node.rhs, StructLiteral):
+            node.rhs.struct_type = self._infer_type(node.lhs, o)
         rhs_code, rhs_type = self.visit(node.rhs, o)
         if isinstance(node.lhs, Identifier):
             lhs_sym = self._lookup_symbol(node.lhs.name, o.sym)
@@ -309,7 +323,9 @@ class CodeGenerator(BaseVisitor):
         fn_sym = self.functions[node.name]
         fn_type = fn_sym.type
         code = ""
-        for arg in node.args:
+        for arg, param_type in zip(node.args, fn_type.param_types):
+            if isinstance(arg, StructLiteral):
+                arg.struct_type = param_type
             arg_code, _ = self.visit(arg, o)
             code += arg_code
         code += self.emit.emit_invoke_static(f"{fn_sym.value.value}/{node.name}", fn_type, frame)
@@ -392,7 +408,7 @@ class CodeGenerator(BaseVisitor):
     def visit_switch_stmt(self, node: SwitchStmt, o: SubBody = None):
         frame = o.frame
     
-        cond_code, _ = self.visit(node.condition, Access(frame, o.sym))
+        cond_code, _ = self.visit(node.expr, Access(frame, o.sym))
         self.emit.print_out(cond_code)
         
         end_label = frame.get_new_label()
@@ -625,7 +641,11 @@ class CodeGenerator(BaseVisitor):
         
         for field_name, field_value in zip(field_names, node.values):
             code += self.emit.emit_dup(frame)
-
+            
+            field_expected_type = self.struct_env[struct_name][field_name]
+            if isinstance(field_value, StructLiteral):
+                field_value.struct_type = field_expected_type
+                
             field_code, field_type = self.visit(field_value, o)
             code += field_code
             

@@ -1254,39 +1254,23 @@ def test_056():
 
 
 def test_057():
-    """Test 57: Function with four parameters"""
+    """Test 057: Struct Declaration and Basic Usage"""
     ast = Program([
-        FuncDecl(
-            IntType(),
-            "sum4",
-            [Param(IntType(), "a"), Param(IntType(), "b"), Param(IntType(), "c"), Param(IntType(), "d")],
-            BlockStmt([
-                ReturnStmt(BinaryOp(
-                    BinaryOp(
-                        BinaryOp(Identifier("a"), "+", Identifier("b")),
-                        "+",
-                        Identifier("c")
-                    ),
-                    "+",
-                    Identifier("d")
-                ))
-            ])
-        ),
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    FuncCall("sum4", [IntLiteral(1), IntLiteral(2), IntLiteral(3), IntLiteral(4)])
-                ]))
-            ])
-        )
+        StructDecl("Point", [
+            MemberDecl(IntType(), "x"),
+            MemberDecl(IntType(), "y")
+        ]),
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(StructType("Point"), "p", None),
+            ExprStmt(AssignExpr(MemberAccess(Identifier("p"), "x"), IntLiteral(10))),
+            ExprStmt(AssignExpr(MemberAccess(Identifier("p"), "y"), IntLiteral(20))),
+            ExprStmt(FuncCall("printInt", [MemberAccess(Identifier("p"), "x")])),
+            ExprStmt(FuncCall("printInt", [MemberAccess(Identifier("p"), "y")]))
+        ]))
     ])
-    expected = "10"
+    expected = "1020"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_058():
     """Test 58: Power calculation - 2^10"""
@@ -1419,25 +1403,21 @@ def test_060():
 
 
 def test_061():
-    """Test 61: Counter with increment"""
+    """Test 061: Struct Literal Initialization"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                VarDecl(IntType(), "count", IntLiteral(0)),
-                ExprStmt(AssignExpr(Identifier("count"), BinaryOp(Identifier("count"), "+", IntLiteral(1)))),
-                ExprStmt(AssignExpr(Identifier("count"), BinaryOp(Identifier("count"), "+", IntLiteral(1)))),
-                ExprStmt(AssignExpr(Identifier("count"), BinaryOp(Identifier("count"), "+", IntLiteral(1)))),
-                ExprStmt(FuncCall("printInt", [Identifier("count")]))
-            ])
-        )
+        StructDecl("Point", [
+            MemberDecl(IntType(), "x"),
+            MemberDecl(IntType(), "y")
+        ]),
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(StructType("Point"), "p", StructLiteral([IntLiteral(30), IntLiteral(40)])),
+            ExprStmt(FuncCall("printInt", [MemberAccess(Identifier("p"), "x")])),
+            ExprStmt(FuncCall("printInt", [MemberAccess(Identifier("p"), "y")]))
+        ]))
     ])
-    expected = "3"
+    expected = "3040"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_062():
     """Test 62: Complex arithmetic with proper precedence"""
@@ -1480,46 +1460,37 @@ def test_063():
     ])
     expected = "12.56"
     result = CodeGenerator().generate_and_run(ast)
-    # This test may fail due to walrus operator, let's skip it for now
-    # assert result == expected, f"Expected '{expected}', got '{result}'"
 
 
 def test_064():
-    """Test 64: Simple expression statement"""
+    """Test 064: Switch-Case Basic (with Break)"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(BinaryOp(IntLiteral(5), "+", IntLiteral(3))),
-                ExprStmt(FuncCall("printString", [StringLiteral("done")]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(IntType(), "x", IntLiteral(2)),
+            SwitchStmt(Identifier("x"), [
+                CaseStmt(IntLiteral(1), [ExprStmt(FuncCall("printInt", [IntLiteral(10)])), BreakStmt()]),
+                CaseStmt(IntLiteral(2), [ExprStmt(FuncCall("printInt", [IntLiteral(20)])), BreakStmt()])
+            ], DefaultStmt([ExprStmt(FuncCall("printInt", [IntLiteral(30)]))]))
+        ]))
     ])
-    expected = "done"
+    expected = "20"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_065():
-    """Test 65: Print multiple values in sequence"""
+    """Test 065: Switch-Case Fallthrough and Default"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [IntLiteral(1)])),
-                ExprStmt(FuncCall("printInt", [IntLiteral(2)])),
-                ExprStmt(FuncCall("printInt", [IntLiteral(3)]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(IntType(), "x", IntLiteral(1)),
+            SwitchStmt(Identifier("x"), [
+                CaseStmt(IntLiteral(1), [ExprStmt(FuncCall("printInt", [IntLiteral(10)]))]), # no break!
+                CaseStmt(IntLiteral(2), [ExprStmt(FuncCall("printInt", [IntLiteral(20)])), BreakStmt()])
+            ], DefaultStmt([ExprStmt(FuncCall("printInt", [IntLiteral(30)]))]))
+        ]))
     ])
-    expected = "123"
+    expected = "1020"  
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_066():
     """Test 66: Print mixed types"""
@@ -1640,80 +1611,64 @@ def test_070():
 
 
 def test_071():
-    """Test 71: Subtraction with negative result"""
+    """Test 071: Break and Continue in For Loop"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(5), "-", IntLiteral(10))
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            ForStmt(
+                VarDecl(IntType(), "i", IntLiteral(0)),
+                BinaryOp(Identifier("i"), "<", IntLiteral(5)),
+                AssignExpr(Identifier("i"), BinaryOp(Identifier("i"), "+", IntLiteral(1))),
+                BlockStmt([
+                    IfStmt(BinaryOp(Identifier("i"), "==", IntLiteral(2)), ContinueStmt(), None),
+                    IfStmt(BinaryOp(Identifier("i"), "==", IntLiteral(4)), BreakStmt(), None),
+                    ExprStmt(FuncCall("printInt", [Identifier("i")]))
+                ])
+            )
+        ]))
     ])
-    expected = "-5"
+    expected = "013" 
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_072():
-    """Test 72: Division by small number"""
+    """Test 072: Logical AND / OR (Short-circuit Evaluation)"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(20), "/", IntLiteral(4))
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            ExprStmt(FuncCall("printInt", [BinaryOp(IntLiteral(1), "||", IntLiteral(0))])),
+            ExprStmt(FuncCall("printInt", [BinaryOp(IntLiteral(0), "&&", IntLiteral(1))])),
+            ExprStmt(FuncCall("printInt", [BinaryOp(IntLiteral(1), "&&", IntLiteral(1))]))
+        ]))
     ])
-    expected = "5"
+    expected = "101"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_073():
-    """Test 73: Modulo with remainder"""
+    """Test 073: Unary NOT and Minus"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(17), "%", IntLiteral(5))
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            ExprStmt(FuncCall("printInt", [PrefixOp("!", IntLiteral(1))])),
+            ExprStmt(FuncCall("printInt", [PrefixOp("!", IntLiteral(0))])),
+            ExprStmt(FuncCall("printInt", [PrefixOp("-", IntLiteral(5))]))
+        ]))
     ])
-    expected = "2"
+    expected = "01-5"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_074():
-    """Test 74: Boolean result - not equal with floats"""
+    """Test 074: Struct Member Increment/Decrement"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(FloatLiteral(3.14), "!=", FloatLiteral(3.14))
-                ]))
-            ])
-        )
+        StructDecl("Point", [MemberDecl(IntType(), "x")]),
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(StructType("Point"), "p", StructLiteral([IntLiteral(10)])),
+            ExprStmt(PostfixOp("++", MemberAccess(Identifier("p"), "x"))),
+            ExprStmt(FuncCall("printInt", [MemberAccess(Identifier("p"), "x")]))
+        ]))
     ])
-    expected = "0"
+    expected = "11"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_075():
     """Test 75: Return value used in expression"""
@@ -1743,35 +1698,23 @@ def test_075():
 
 
 def test_076():
-    """Test 76: Long chain of operations"""
+    """Test 076: Chained Assignment and Assignment as Expression"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(
-                        BinaryOp(
-                            BinaryOp(
-                                BinaryOp(IntLiteral(1), "+", IntLiteral(1)),
-                                "+",
-                                IntLiteral(1)
-                            ),
-                            "+",
-                            IntLiteral(1)
-                        ),
-                        "+",
-                        IntLiteral(1)
-                    )
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(IntType(), "a", IntLiteral(0)),
+            VarDecl(IntType(), "b", IntLiteral(0)),
+            VarDecl(IntType(), "c", IntLiteral(0)),
+            ExprStmt(AssignExpr(Identifier("a"), AssignExpr(Identifier("b"), AssignExpr(Identifier("c"), IntLiteral(5))))),
+            ExprStmt(FuncCall("printInt", [Identifier("a")])),
+            ExprStmt(FuncCall("printInt", [Identifier("b")])),
+            ExprStmt(FuncCall("printInt", [Identifier("c")])),
+            VarDecl(IntType(), "d", BinaryOp(AssignExpr(Identifier("a"), IntLiteral(2)), "+", IntLiteral(3))),
+            ExprStmt(FuncCall("printInt", [Identifier("d")]))
+        ]))
     ])
-    expected = "5"
+    expected = "5555" 
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_077():
     """Test 77: While with early variable initialization"""
@@ -1920,71 +1863,54 @@ def test_082():
     ast = Program([
         FuncDecl(VoidType(), "main", [], BlockStmt([
             VarDecl(IntType(), "x", IntLiteral(5)),
-            ExprStmt(FuncCall("printInt", [PostfixOp("++", Identifier("x"))])), # In ra 5, x thành 6
-            ExprStmt(FuncCall("printInt", [PrefixOp("++", Identifier("x"))]))   # x thành 7, in ra 7
+            ExprStmt(FuncCall("printInt", [PostfixOp("++", Identifier("x"))])), 
+            ExprStmt(FuncCall("printInt", [PrefixOp("++", Identifier("x"))]))  
         ]))
     ])
     expected = "57"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
 
-
 def test_083():
-    """Test 83: Less or equal - boundary"""
+    """Test 083: Nested Structs and Member Access"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(5), "<=", IntLiteral(5))
-                ]))
-            ])
-        )
+        StructDecl("Inner", [MemberDecl(IntType(), "v")]),
+        StructDecl("Outer", [MemberDecl(StructType("Inner"), "in")]),
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(StructType("Outer"), "o", StructLiteral([StructLiteral([IntLiteral(77)])])),
+            ExprStmt(FuncCall("printInt", [MemberAccess(MemberAccess(Identifier("o"), "in"), "v")]))
+        ]))
     ])
-    expected = "1"
+    expected = "77"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_084():
-    """Test 84: Greater or equal - boundary"""
+    """Test 084: Auto Type Inference with Structs"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(5), ">=", IntLiteral(5))
-                ]))
-            ])
-        )
+        StructDecl("Data", [MemberDecl(IntType(), "val")]),
+        FuncDecl(StructType("Data"), "getData", [], BlockStmt([
+            ReturnStmt(StructLiteral([IntLiteral(99)]))
+        ])),
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            VarDecl(None, "d", FuncCall("getData", [])),
+            ExprStmt(FuncCall("printInt", [MemberAccess(Identifier("d"), "val")]))
+        ]))
     ])
-    expected = "1"
+    expected = "99"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_085():
-    """Test 85: Greater than check"""
+    """Test 085: Unary Plus Operator"""
     ast = Program([
-        FuncDecl(
-            VoidType(),
-            "main",
-            [],
-            BlockStmt([
-                ExprStmt(FuncCall("printInt", [
-                    BinaryOp(IntLiteral(10), ">", IntLiteral(5))
-                ]))
-            ])
-        )
+        FuncDecl(VoidType(), "main", [], BlockStmt([
+            ExprStmt(FuncCall("printInt", [PrefixOp("+", IntLiteral(42))]))
+        ]))
     ])
-    expected = "1"
+    expected = "42"
     result = CodeGenerator().generate_and_run(ast)
     assert result == expected, f"Expected '{expected}', got '{result}'"
-
 
 def test_086():
     """Test 86: Complex condition in if"""
