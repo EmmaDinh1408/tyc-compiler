@@ -26,6 +26,7 @@ class CodeGenerator(BaseVisitor):
         self.current_return_type = VoidType()
         self.class_name = "TyC"
         self.loop_stack = []  
+        self.struct_env = {}
 
     def _lookup_symbol(self, name: str, sym_list: list[Symbol]) -> Symbol:
         for sym in reversed(sym_list):
@@ -46,6 +47,11 @@ class CodeGenerator(BaseVisitor):
             return self._infer_type(node.rhs, o)
         if isinstance(node, FuncCall):
             return self.functions[node.name].type.return_type
+        if isinstance(node, MemberAccess):
+            obj_type = self._infer_type(node.obj, o)
+            if hasattr(obj_type, 'struct_name'):
+                return self.struct_env.get(obj_type.struct_name, {}).get(node.member, IntType())
+            return IntType()
         if isinstance(node, BinaryOp):
             if node.operator in ["+", "-", "*", "/", "%"]:
                 left_type = self._infer_type(node.left, o)
@@ -64,6 +70,8 @@ class CodeGenerator(BaseVisitor):
         for io_sym in IO_SYMBOL_LIST:
             self.functions[io_sym.name] = io_sym
 
+        self.struct_env = {}
+
         for decl in node.decls:
             if isinstance(decl, FuncDecl):
                 return_type = decl.return_type if decl.return_type else VoidType()
@@ -71,9 +79,13 @@ class CodeGenerator(BaseVisitor):
                 self.functions[decl.name] = Symbol(
                     decl.name, FunctionType(param_types, return_type), CName(self.class_name)
                 )
+            elif isinstance(decl, StructDecl):
+                self.struct_env[decl.name] = {m.name: m.member_type for m in decl.members}
 
         for decl in node.decls:
             if isinstance(decl, FuncDecl):
+                self.visit(decl, None)
+            elif isinstance(decl, StructDecl):
                 self.visit(decl, None)
 
         self.emit.emit_epilog()
@@ -147,7 +159,13 @@ class CodeGenerator(BaseVisitor):
     def visit_var_decl(self, node: VarDecl, o: SubBody = None):
         frame = o.frame
         idx = frame.get_new_index()
-        var_type = node.var_type if node.var_type else self._infer_type(node.init_value, Access(frame, o.sym))
+        if node.var_type:
+            var_type = node.var_type
+        else:
+            if node.init_value is None:
+                var_type = getattr(node, 'inferred_type', IntType()) 
+            else:
+                var_type = self._infer_type(node.init_value, Access(frame, o.sym))    
         self.emit.print_out(
             self.emit.emit_var(
                 idx, node.name, var_type, frame.get_start_label(), frame.get_end_label()
@@ -186,6 +204,7 @@ class CodeGenerator(BaseVisitor):
         frame = o.frame
         start_label = frame.get_new_label()
         end_label = frame.get_new_label()
+        self.loop_stack.append({"start": start_label, "end": end_label})
         self.emit.print_out(self.emit.emit_label(start_label, frame))
         cond_code, _ = self.visit(node.condition, Access(frame, o.sym))
         self.emit.print_out(cond_code)
@@ -193,6 +212,7 @@ class CodeGenerator(BaseVisitor):
         self.visit(node.body, o)
         self.emit.print_out(self.emit.emit_goto(start_label, frame))
         self.emit.print_out(self.emit.emit_label(end_label, frame))
+        self.loop_stack.pop()
         return o
 
     def visit_return_stmt(self, node: ReturnStmt, o: SubBody = None):
@@ -241,17 +261,47 @@ class CodeGenerator(BaseVisitor):
         if node.operator in ["<", "<=", ">", ">=", "==", "!="]:
             op_type = FloatType() if is_float_type(left_type) or is_float_type(right_type) else IntType()
             return left_code + right_code + self.emit.emit_re_op(node.operator, op_type, frame), IntType()
+        if node.operator == "&&":
+            label_false = frame.get_new_label()
+            label_end = frame.get_new_label()
+            code = left_code
+            code += self.emit.emit_if_false(label_false, frame)
+            code += right_code
+            code += self.emit.emit_if_false(label_false, frame)
+            code += self.emit.emit_push_iconst(1, frame)
+            code += self.emit.emit_goto(label_end, frame)
+            code += self.emit.emit_label(label_false, frame)
+            code += self.emit.emit_push_iconst(0, frame)
+            code += self.emit.emit_label(label_end, frame)
+            return code, IntType()
+        if node.operator == "||":
+            label_true = frame.get_new_label()
+            label_end = frame.get_new_label()
+            code = left_code
+            code += self.emit.emit_if_true(label_true, frame)
+            code += right_code
+            code += self.emit.emit_if_true(label_true, frame)
+            code += self.emit.emit_push_iconst(0, frame)
+            code += self.emit.emit_goto(label_end, frame)
+            code += self.emit.emit_label(label_true, frame)
+            code += self.emit.emit_push_iconst(1, frame)
+            code += self.emit.emit_label(label_end, frame)
+            return code, IntType()
         raise RuntimeError(f"Unsupported operator: {node.operator}")
 
     def visit_assign_expr(self, node: AssignExpr, o: Access = None):
-        if not isinstance(node.lhs, Identifier):
-            raise RuntimeError("Minimal codegen only supports identifier assignment")
         rhs_code, rhs_type = self.visit(node.rhs, o)
-        lhs_sym = self._lookup_symbol(node.lhs.name, o.sym)
-        idx = lhs_sym.value.value
-        code = rhs_code + self.emit.emit_dup(o.frame) + self.emit.emit_write_var(
-            node.lhs.name, lhs_sym.type, idx, o.frame
-        )
+        if isinstance(node.lhs, Identifier):
+            lhs_sym = self._lookup_symbol(node.lhs.name, o.sym)
+            idx = lhs_sym.value.value
+            code = rhs_code + self.emit.emit_dup(o.frame) + self.emit.emit_write_var(
+                node.lhs.name, lhs_sym.type, idx, o.frame
+            )
+        elif isinstance(node.lhs, MemberAccess):
+            obj_code, obj_type = self.visit(node.lhs.obj, o)
+            struct_name = getattr(obj_type, 'struct_name', 'UnknownStruct')
+            field_lexeme = f"{struct_name}/{node.lhs.member}"
+            code = obj_code + rhs_code + self.emit.emit_dup_x1(o.frame) + self.emit.emit_put_field(field_lexeme, rhs_type, o.frame)
         return code, rhs_type
 
     def visit_func_call(self, node: FuncCall, o: Access = None):
@@ -277,23 +327,6 @@ class CodeGenerator(BaseVisitor):
 
     def visit_string_literal(self, node: StringLiteral, o: Access = None):
         return self.emit.emit_push_const(node.value, StringType(), o.frame), StringType()
-
-    def visit_struct_literal(self, node: StructLiteral, o: Access = None):
-        frame = o.frame
-        struct_name = node.struct_type.struct_name
-        
-        code = self.emit.emit_new_instance(struct_name, frame)
-        
-        for field_name, field_value in zip(node.field_names, node.field_values):
-            code += self.emit.emit_dup(frame)
-            
-            field_code, field_type = self.visit(field_value, o)
-            code += field_code
-            
-            field_lexeme = f"{struct_name}/{field_name}"
-            code += self.emit.emit_put_field(field_lexeme, field_type, frame)
-        
-        return code, node.struct_type
     
     def visit_member_decl(self, node: MemberDecl, o: Any = None):
         emitter = o 
@@ -376,7 +409,7 @@ class CodeGenerator(BaseVisitor):
             
             self.emit.print_out(self.emit.emit_dup(frame))
             
-            case_val_code, case_val_type = self.visit(case.value, Access(frame, o.sym))
+            case_val_code, case_val_type = self.visit(case.expr, Access(frame, o.sym))
             self.emit.print_out(case_val_code)
             
             self.emit.print_out(self.emit.emit_re_op("==", case_val_type, frame))
@@ -438,94 +471,146 @@ class CodeGenerator(BaseVisitor):
         
         if node.operator == "-":
             operand_code, operand_type = self.visit(node.operand, o)
-            self.emit.print_out(operand_code)
-            self.emit.print_out(self.emit.emit_neg_op(operand_type, frame))
             return operand_code + self.emit.emit_neg_op(operand_type, frame), operand_type
-        
+        elif node.operator == "+":
+            return self.visit(node.operand, o)
         elif node.operator == "!":
             operand_code, _ = self.visit(node.operand, o)
-            self.emit.print_out(operand_code)
-            label_true = frame.get_new_label()
+            label_false = frame.get_new_label()
             label_end = frame.get_new_label()
-            self.emit.print_out(self.emit.emit_if_false(label_true, frame))
-            self.emit.print_out(self.emit.emit_push_iconst(0, frame))
-            self.emit.print_out(self.emit.emit_goto(label_end, frame))
-            self.emit.print_out(self.emit.emit_label(label_true, frame))
-            self.emit.print_out(self.emit.emit_push_iconst(1, frame))
-            self.emit.print_out(self.emit.emit_label(label_end, frame))
-            return operand_code + self.emit.emit_neg_op(IntType(), frame), IntType()
+    
+            code = operand_code
+            code += self.emit.emit_if_false(label_false, frame)
+            code += self.emit.emit_push_iconst(0, frame) 
+            code += self.emit.emit_goto(label_end, frame)
+            code += self.emit.emit_label(label_false, frame)
+            code += self.emit.emit_push_iconst(1, frame) 
+            code += self.emit.emit_label(label_end, frame)
+    
+            return code, IntType()
         
         elif node.operator == "++":
-            if not isinstance(node.operand, Identifier):
-                raise RuntimeError("Pre-increment only supports identifiers")
-            sym = self._lookup_symbol(node.operand.name, o.sym)
-            idx = sym.value.value
-            
-            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
-            code += self.emit.emit_push_iconst(1, frame)
-            code += self.emit.emit_add_op("+", sym.type, frame)
-            code += self.emit.emit_dup(frame)
-            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
-            return code, sym.type
-        
+            if isinstance(node.operand, Identifier):
+                sym = self._lookup_symbol(node.operand.name, o.sym)
+                idx = sym.value.value
+                code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("+", sym.type, frame)
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+                return code, sym.type
+            elif isinstance(node.operand, MemberAccess):
+                obj_code, obj_type = self.visit(node.operand.obj, o)
+                struct_name = getattr(obj_type, 'struct_name', 'UnknownStruct')
+                member_name = node.operand.member
+                member_type = self.struct_env.get(struct_name, {}).get(member_name, IntType())
+                field_lexeme = f"{struct_name}/{member_name}"
+                code = obj_code
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_get_field(field_lexeme, member_type, frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("+", member_type, frame)
+                code += self.emit.emit_dup_x1(frame)
+                code += self.emit.emit_put_field(field_lexeme, member_type, frame)
+                return code, member_type
+            else:
+                raise RuntimeError("Pre-increment only supports identifiers or member access")
+
         elif node.operator == "--":
-            if not isinstance(node.operand, Identifier):
-                raise RuntimeError("Pre-decrement only supports identifiers")
-            sym = self._lookup_symbol(node.operand.name, o.sym)
-            idx = sym.value.value
-            
-            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
-            code += self.emit.emit_push_iconst(1, frame)
-            code += self.emit.emit_add_op("-", sym.type, frame)
-            code += self.emit.emit_dup(frame)
-            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
-            return code, sym.type
+            if isinstance(node.operand, Identifier):
+                sym = self._lookup_symbol(node.operand.name, o.sym)
+                idx = sym.value.value
+                code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("-", sym.type, frame)
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+                return code, sym.type
+            elif isinstance(node.operand, MemberAccess):
+                obj_code, obj_type = self.visit(node.operand.obj, o)
+                struct_name = getattr(obj_type, 'struct_name', 'UnknownStruct')
+                member_name = node.operand.member
+                member_type = self.struct_env.get(struct_name, {}).get(member_name, IntType())
+                field_lexeme = f"{struct_name}/{member_name}"
+                code = obj_code
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_get_field(field_lexeme, member_type, frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("-", member_type, frame)
+                code += self.emit.emit_dup_x1(frame)
+                code += self.emit.emit_put_field(field_lexeme, member_type, frame)
+                return code, member_type
+            else:
+                raise RuntimeError("Pre-decrement only supports identifiers or member access")
         
         raise RuntimeError(f"Unsupported prefix operator: {node.operator}")
 
     def visit_postfix_op(self, node: PostfixOp, o: Access = None):
         frame = o.frame
-        
+
         if node.operator == "++":
-            if not isinstance(node.operand, Identifier):
-                raise RuntimeError("Post-increment only supports identifiers")
-            sym = self._lookup_symbol(node.operand.name, o.sym)
-            idx = sym.value.value
-            
-            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
-            code += self.emit.emit_dup(frame) 
-            code += self.emit.emit_push_iconst(1, frame)
-            code += self.emit.emit_add_op("+", sym.type, frame)
-            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
-            return code, sym.type
-        
+            if isinstance(node.operand, Identifier):
+                sym = self._lookup_symbol(node.operand.name, o.sym)
+                idx = sym.value.value
+                code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("+", sym.type, frame)
+                code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+                return code, sym.type
+            elif isinstance(node.operand, MemberAccess):
+                obj_code, obj_type = self.visit(node.operand.obj, o)
+                struct_name = getattr(obj_type, 'struct_name', 'UnknownStruct')
+                member_name = node.operand.member
+                member_type = self.struct_env.get(struct_name, {}).get(member_name, IntType())
+                field_lexeme = f"{struct_name}/{member_name}"
+                code = obj_code
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_get_field(field_lexeme, member_type, frame)
+                code += self.emit.emit_dup_x1(frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("+", member_type, frame)
+                code += self.emit.emit_put_field(field_lexeme, member_type, frame)
+                return code, member_type
+            raise RuntimeError("Post-increment only supports identifiers or member access")
+
         elif node.operator == "--":
-            
-            if not isinstance(node.operand, Identifier):
-                raise RuntimeError("Post-decrement only supports identifiers")
-            sym = self._lookup_symbol(node.operand.name, o.sym)
-            idx = sym.value.value
-            
-            code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
-            code += self.emit.emit_dup(frame)  
-            code += self.emit.emit_push_iconst(1, frame)
-            code += self.emit.emit_add_op("-", sym.type, frame)
-            code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
-            
-            return code, sym.type
-        
+            if isinstance(node.operand, Identifier):
+                sym = self._lookup_symbol(node.operand.name, o.sym)
+                idx = sym.value.value
+                code = self.emit.emit_read_var(node.operand.name, sym.type, idx, frame)
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("-", sym.type, frame)
+                code += self.emit.emit_write_var(node.operand.name, sym.type, idx, frame)
+                return code, sym.type
+            elif isinstance(node.operand, MemberAccess):
+                obj_code, obj_type = self.visit(node.operand.obj, o)
+                struct_name = getattr(obj_type, 'struct_name', 'UnknownStruct')
+                member_name = node.operand.member
+                member_type = self.struct_env.get(struct_name, {}).get(member_name, IntType())
+                field_lexeme = f"{struct_name}/{member_name}"
+                code = obj_code
+                code += self.emit.emit_dup(frame)
+                code += self.emit.emit_get_field(field_lexeme, member_type, frame)
+                code += self.emit.emit_dup_x1(frame)
+                code += self.emit.emit_push_iconst(1, frame)
+                code += self.emit.emit_add_op("-", member_type, frame)
+                code += self.emit.emit_put_field(field_lexeme, member_type, frame)
+                return code, member_type
+            raise RuntimeError("Post-decrement only supports identifiers or member access")
+
         raise RuntimeError(f"Unsupported postfix operator: {node.operator}")
 
     def visit_member_access(self, node: MemberAccess, o: Access = None):
         frame = o.frame
         
-        obj_code, obj_type = self.visit(node.obj, o)
-        self.emit.print_out(obj_code)
-        
+        obj_code, obj_type = self.visit(node.obj, o)        
         struct_name = obj_type.struct_name if hasattr(obj_type, 'struct_name') else "UnknownStruct"
         field_lexeme = f"{struct_name}/{node.member}"
         
-        member_type = IntType()  
+        member_type = self.struct_env.get(struct_name, {}).get(node.member, IntType())
+
         field_code = self.emit.emit_get_field(field_lexeme, member_type, frame)
         
         return obj_code + field_code, member_type
@@ -536,7 +621,9 @@ class CodeGenerator(BaseVisitor):
         
         code = self.emit.emit_new_instance(struct_name, frame)
         
-        for field_name, field_value in zip(node.field_names, node.field_values):
+        field_names = list(self.struct_env[struct_name].keys())
+        
+        for field_name, field_value in zip(field_names, node.values):
             code += self.emit.emit_dup(frame)
 
             field_code, field_type = self.visit(field_value, o)
@@ -546,3 +633,20 @@ class CodeGenerator(BaseVisitor):
             code += self.emit.emit_put_field(field_lexeme, field_type, frame)
         
         return code, node.struct_type
+    
+    
+    def visit_struct_decl(self, node: StructDecl, o: Any = None):
+        struct_emit = Emitter(f"{node.name}.j")
+        struct_emit.print_out(struct_emit.emit_prolog(node.name))
+
+        for member in node.members:
+            field_code = self.visit(member, struct_emit)
+            struct_emit.print_out(field_code)
+
+        struct_emit.print_out(".method public <init>()V\n")
+        struct_emit.print_out("aload_0\n")
+        struct_emit.print_out("invokespecial java/lang/Object/<init>()V\n")
+        struct_emit.print_out("return\n")
+        struct_emit.print_out(".end method\n")
+
+        struct_emit.emit_epilog()
